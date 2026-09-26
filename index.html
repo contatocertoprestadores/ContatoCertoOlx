@@ -734,5 +734,209 @@ body { padding-bottom: 0 !important; }
   console.log('Fix anunciar aplicado - bairro/cidade agora opcionais');
 })();
 </script>
+
+<script>
+(function(){
+  let deferredPrompt = null;
+  let installReady = false;
+
+  window.addEventListener('beforeinstallprompt', (e)=>{
+    e.preventDefault();
+    deferredPrompt = e;
+    installReady = true;
+    console.log('PWA pronto para instalar');
+    const btn = document.getElementById('cc-dl') || document.getElementById('cc-download-normal') || document.getElementById('cc-download-float');
+    if(btn){
+      btn.innerHTML = '⬇️ Instalar App';
+      btn.style.background = '#16a34a';
+    }
+  });
+
+  window.addEventListener('appinstalled', ()=>{
+    console.log('App instalado');
+    installReady = false;
+    deferredPrompt = null;
+    const btn = document.getElementById('cc-dl');
+    if(btn){ btn.innerHTML = '✅ App Instalado'; setTimeout(()=>{ btn.style.display='none'; }, 2000); }
+  });
+
+  function handleDownload(e){
+    e.preventDefault();
+    const btn = e.currentTarget;
+    
+    if(deferredPrompt && installReady){
+      // PWA install real
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choice)=>{
+        if(choice.outcome === 'accepted'){
+          btn.innerHTML = '✅ Instalando...';
+        } else {
+          btn.innerHTML = '⬇️ Baixar App';
+        }
+        deferredPrompt = null;
+        installReady = false;
+      });
+    } else {
+      // Fallback: instruções + tentativa de criar atalho
+      if(/iPhone|iPad|iPod/.test(navigator.userAgent)){
+        alert('Para instalar no iPhone:\n1. Toque no botão Compartilhar (quadrado com seta)\n2. Role e toque em "Adicionar à Tela de Início"\n3. Toque em Adicionar');
+      } else if(/Android/.test(navigator.userAgent)){
+        // Tenta forçar o prompt se ainda não apareceu
+        alert('Para instalar no Android:\n1. Toque nos 3 pontinhos no topo do Chrome\n2. Toque em "Instalar app" ou "Adicionar à tela inicial"\n3. Confirme em Instalar\n\nSe não aparecer a opção, o navegador já deve ter mostrado automaticamente.');
+        // Se não tem prompt, recarrega para tentar capturar
+        if(!deferredPrompt){
+          setTimeout(()=>{ location.reload(); }, 1000);
+        }
+      } else {
+        alert('Para instalar no computador:\n1. No Chrome, clique no ícone de instalação na barra de endereço (lado direito)\n2. Ou clique nos 3 pontinhos > Instalar Contato Certo SP\n3. Confirme');
+      }
+      
+      // Tenta registrar service worker se não registrado
+      if('serviceWorker' in navigator){
+        navigator.serviceWorker.register('./service-worker.js').then(()=>{ console.log('SW registrado'); }).catch(()=>{});
+      }
+    }
+  }
+
+  // Aplica em todos botões de download
+  function bindDownload(){
+    document.querySelectorAll('#cc-dl, #cc-download-normal, #cc-download-float, a[href="#"][id*="download"], button[id*="download"]').forEach(btn=>{
+      if(btn.dataset.bound) return;
+      btn.dataset.bound='1';
+      btn.addEventListener('click', handleDownload);
+      btn.style.cursor='pointer';
+    });
+  }
+
+  setTimeout(bindDownload, 500);
+  setInterval(bindDownload, 2000);
+
+  // Garante SW registrado
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', ()=>{
+      navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
+    });
+  }
+})();
+</script>
+
+<script>
+(function(){
+  // Canal tempo real
+  let canal;
+  try{ canal = new BroadcastChannel('contato_certo_sp_online'); }catch(e){}
+  
+  function broadcast(tipo, dados){
+    if(canal){
+      try{ canal.postMessage({tipo, dados, hora: Date.now(), id: Math.random()}); }catch(e){}
+    }
+    // Salva última atualização
+    localStorage.setItem('cc_last_update', Date.now().toString());
+  }
+
+  if(canal){
+    canal.onmessage = (e)=>{
+      if(!e.data || !e.data.tipo) return;
+      console.log('Tempo real recebido:', e.data.tipo);
+      // Força atualização visual
+      if(e.data.tipo === 'novo_anuncio' || e.data.tipo === 'anuncio'){
+        // Mostra toast "Novo anúncio ao vivo"
+        mostraToast('🔴 Novo anúncio ao vivo!');
+        // Força React a re-renderizar se estiver na home
+        setTimeout(()=>{ window.dispatchEvent(new Event('storage')); }, 100);
+      }
+      if(e.data.tipo === 'usuario' || e.data.tipo === 'plano' || e.data.tipo === 'pagamento'){
+        const admContent = document.getElementById('cc-adm-content');
+        if(admContent && document.getElementById('cc-adm')?.classList.contains('on')){
+          const aba = document.querySelector('.cc-tab.on')?.dataset.tab;
+          if(aba && window.render) render(aba);
+        }
+      }
+    };
+  }
+
+  function mostraToast(msg){
+    let toast = document.getElementById('cc-toast');
+    if(!toast){
+      toast = document.createElement('div');
+      toast.id='cc-toast';
+      toast.style.cssText='position:fixed; top:80px; left:50%; transform:translateX(-50%); background:#1E40AF; color:#fff; padding:10px 18px; border-radius:999px; font-weight:800; font-size:12px; z-index:100000; box-shadow:0 8px 24px rgba(0,0,0,.2); display:none;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.display='block';
+    setTimeout(()=>{ toast.style.display='none'; }, 3000);
+  }
+
+  // Intercepta criação de anúncio para avisar tempo real
+  const origSetItem = localStorage.setItem;
+  localStorage.setItem = function(k,v){
+    const result = origSetItem.call(this, k, v);
+    if(k==='cc_ads'){
+      try{
+        const ads = JSON.parse(v);
+        const last = ads[ads.length-1];
+        if(last && Date.now() - new Date(last.created_at).getTime() < 5000){
+          broadcast('novo_anuncio', {titulo: last.titulo});
+          mostraToast('✅ Anúncio publicado ao vivo!');
+        } else {
+          broadcast('anuncio', {});
+        }
+      }catch{}
+    }
+    if(k==='cc_users') broadcast('usuario', {});
+    if(k==='cc_payments_pending') broadcast('pagamento', {});
+    if(k==='cc_plans') broadcast('plano', {});
+    return result;
+  };
+
+  // Indicador ao vivo no header
+  function addIndicadorAoVivo(){
+    const header = document.querySelector('header');
+    if(!header || document.getElementById('cc-ao-vivo')) return;
+    const indicador = document.createElement('div');
+    indicador.id='cc-ao-vivo';
+    indicador.innerHTML='<span style="display:inline-block; width:8px; height:8px; background:#22c55e; border-radius:50%; margin-right:6px; animation:pulse 2s infinite;"></span>AO VIVO';
+    indicador.style.cssText='position:fixed; top:10px; right:70px; background:rgba(0,0,0,0.7); color:#fff; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:800; z-index:9999; display:flex; align-items:center; letter-spacing:0.5px;';
+    document.body.appendChild(indicador);
+    
+    const style = document.createElement('style');
+    style.textContent='@keyframes pulse{0%,100%{opacity:1} 50%{opacity:0.5}}';
+    document.head.appendChild(style);
+  }
+
+  // Atualização automática a cada 3s
+  let lastAdCount = 0;
+  function verificaNovidades(){
+    try{
+      const ads = JSON.parse(localStorage.getItem('cc_ads')||'[]');
+      if(ads.length !== lastAdCount && lastAdCount!==0){
+        if(ads.length > lastAdCount){
+          mostraToast(`🔴 ${ads.length - lastAdCount} novo(s) anúncio(s) ao vivo!`);
+        }
+        // Força atualização da lista na home
+        window.dispatchEvent(new Event('storage'));
+      }
+      lastAdCount = ads.length;
+    }catch{}
+  }
+
+  setTimeout(()=>{
+    addIndicadorAoVivo();
+    try{ lastAdCount = JSON.parse(localStorage.getItem('cc_ads')||'[]').length; }catch{}
+    setInterval(verificaNovidades, 3000);
+    setInterval(()=>{ broadcast('heartbeat', {}); }, 10000);
+  }, 1000);
+
+  // Mostra quando alguém está online (simula usuários online)
+  setInterval(()=>{
+    const online = Math.floor(Math.random()*15)+5;
+    const el = document.getElementById('cc-ao-vivo');
+    if(el){
+      el.innerHTML=`<span style="display:inline-block; width:8px; height:8px; background:#22c55e; border-radius:50%; margin-right:6px; animation:pulse 2s infinite;"></span>${online} AO VIVO`;
+    }
+  }, 5000);
+})();
+</script>
 </body>
 </html>
