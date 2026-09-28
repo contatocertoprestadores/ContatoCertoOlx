@@ -86,7 +86,19 @@ html,body{max-width:100%;overflow-x:hidden}
 }
 @media(max-width:768px){ #cc-dl, #cc-download-normal, #cc-download-float{ bottom:75px !important; right:12px !important; padding:10px 14px !important; font-size:11px !important } }
 </style>
+
+<style>
+#cc-ao-vivo-supabase{position:fixed; top:10px; right:70px; background:rgba(0,0,0,0.75); color:#fff; padding:5px 12px; border-radius:999px; font-size:10px; font-weight:800; z-index:9999; display:flex; align-items:center; letter-spacing:0.5px}
+@keyframes pulse{0%,100%{opacity:1} 50%{opacity:0.5}}
+</style>
+
+<script>
+localStorage.setItem('cc_supabase_url', 'https://rxteebstgzogpkhaxjxz.supabase.co');
+localStorage.setItem('cc_supabase_key', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ4dGVlYnN0Z3pvZ3BraGF4anh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3Nzg1MDgsImV4cCI6MjEwNTM1NDUwOH0.xzZdRiwpO3EOyhjusKf0DWBQOpm4lZppredOFR8V9gc');
+console.log('Supabase configurado automaticamente: https://rxteebstgzogpkhaxjxz.supabase.co');
+</script>
 </head>
+
 <body>
   <div id="root"></div>
   
@@ -936,6 +948,294 @@ body { padding-bottom: 0 !important; }
       el.innerHTML=`<span style="display:inline-block; width:8px; height:8px; background:#22c55e; border-radius:50%; margin-right:6px; animation:pulse 2s infinite;"></span>${online} AO VIVO`;
     }
   }, 5000);
+})();
+</script>
+
+<!-- Supabase Realtime -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
+<script>
+(function(){
+  // CONFIGURE AQUI SEU SUPABASE - crie projeto grátis em supabase.com
+  const SUPABASE_URL = localStorage.getItem('cc_supabase_url') || 'https://rxteebstgzogpkhaxjxz.supabase.co';
+  const SUPABASE_KEY = localStorage.getItem('cc_supabase_key') || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ4dGVlYnN0Z3pvZ3BraGF4anh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3Nzg1MDgsImV4cCI6MjEwNTM1NDUwOH0.xzZdRiwpO3EOyhjusKf0DWBQOpm4lZppredOFR8V9gc';
+  
+  let supabaseClient = null;
+  let supabaseReady = false;
+  let realtimeChannel = null;
+
+  function initSupabase(){
+    try{
+      if(SUPABASE_URL.includes('SEU-PROJETO') || SUPABASE_KEY.includes('SUA-ANON')){
+        console.log('Supabase não configurado - usando modo local');
+        // Mostra aviso para configurar
+        if(!localStorage.getItem('cc_supabase_aviso')){
+          setTimeout(()=>{
+            if(confirm('Para tempo real entre celulares, configure o Supabase.\n\nDeseja configurar agora? (grátis)')){
+              configurarSupabase();
+            }
+          }, 3000);
+        }
+        return false;
+      }
+      
+      if(window.supabase && SUPABASE_URL && SUPABASE_KEY){
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        supabaseReady = true;
+        console.log('Supabase conectado:', SUPABASE_URL);
+        setupRealtime();
+        carregarAnunciosSupabase();
+        return true;
+      }
+    }catch(e){
+      console.error('Erro Supabase:', e);
+      return false;
+    }
+  }
+
+  window.configurarSupabase = function(){
+    const url = prompt('Cole a URL do seu projeto Supabase:\n(ex: https://abcd123.supabase.co)', localStorage.getItem('cc_supabase_url')||'');
+    if(!url) return;
+    const key = prompt('Cole a ANON KEY do Supabase:\n(encontra em Project Settings > API)', localStorage.getItem('cc_supabase_key')||'');
+    if(!key) return;
+    localStorage.setItem('cc_supabase_url', url);
+    localStorage.setItem('cc_supabase_key', key);
+    alert('Configurado! Recarregando...');
+    location.reload();
+  };
+
+  // SQL para criar tabelas no Supabase - cole no SQL Editor do Supabase
+  window.mostrarSQLSupabase = function(){
+    const sql = `-- COLE ISTO NO SQL EDITOR DO SUPABASE:
+
+-- Tabela de anúncios
+create table if not exists ads (
+  id text primary key,
+  user_id text,
+  titulo text not null,
+  descricao text,
+  categoria text,
+  preco text,
+  bairro text default 'Centro',
+  cidade text default 'São Paulo',
+  estado text default 'SP',
+  fotos jsonb default '[]'::jsonb,
+  status text default 'ativo',
+  created_at timestamp default now(),
+  destaque boolean default false,
+  views int default 0
+);
+
+-- Tabela de usuários
+create table if not exists users (
+  id text primary key,
+  nome text,
+  username text unique,
+  email text,
+  telefone text,
+  bairro text,
+  cidade text,
+  estado text default 'SP',
+  plano text default 'Básico',
+  status text default 'ativo',
+  created_at timestamp default now()
+);
+
+-- Tabela de pagamentos
+create table if not exists payments (
+  id text primary key,
+  user_id text,
+  nome text,
+  username text,
+  email text,
+  plano_solicitado text,
+  plano_nome text,
+  valor numeric,
+  status text default 'pendente',
+  data timestamp default now(),
+  comprovante text
+);
+
+-- Habilitar Realtime
+alter publication supabase_realtime add table ads;
+alter publication supabase_realtime add table users;
+alter publication supabase_realtime add table payments;
+
+-- Políticas (permite leitura/escrita pública - ajuste depois)
+create policy "public read" on ads for select using (true);
+create policy "public insert" on ads for insert with check (true);
+create policy "public update" on ads for update using (true);
+create policy "public delete" on ads for delete using (true);
+
+create policy "public all users" on users for all using (true) with check (true);
+create policy "public all payments" on payments for all using (true) with check (true);
+
+-- Habilitar RLS
+alter table ads enable row level security;
+alter table users enable row level security;
+alter table payments enable row level security;
+`;
+    prompt('Copie este SQL e cole no SQL Editor do Supabase:', sql);
+    console.log(sql);
+  };
+
+  async function carregarAnunciosSupabase(){
+    if(!supabaseReady) return;
+    try{
+      const { data, error } = await supabaseClient.from('ads').select('*').order('created_at', {ascending:false}).limit(100);
+      if(error) throw error;
+      if(data && data.length>0){
+        // Converte para formato local
+        const adsFormatados = data.map(d=>({
+          id: d.id,
+          user_id: d.user_id,
+          titulo: d.titulo,
+          descricao: d.descricao,
+          categoria: d.categoria,
+          preco: d.preco,
+          bairro: d.bairro,
+          cidade: d.cidade,
+          estado: d.estado,
+          fotos: d.fotos||[],
+          status: d.status,
+          created_at: d.created_at,
+          destaque: d.destaque,
+          views: d.views
+        }));
+        localStorage.setItem('cc_ads', JSON.stringify(adsFormatados));
+        window.dispatchEvent(new Event('storage'));
+        console.log('Anúncios carregados do Supabase:', adsFormatados.length);
+      }
+    }catch(e){
+      console.error('Erro carregar Supabase:', e);
+    }
+  }
+
+  function setupRealtime(){
+    if(!supabaseReady) return;
+    try{
+      // Canal para anúncios
+      realtimeChannel = supabaseClient.channel('contato-certo-realtime')
+        .on('postgres_changes', {event:'INSERT', schema:'public', table:'ads'}, payload=>{
+          console.log('Novo anúncio ao vivo:', payload.new);
+          const ads = JSON.parse(localStorage.getItem('cc_ads')||'[]');
+          if(!ads.find(a=>a.id===payload.new.id)){
+            ads.unshift(payload.new);
+            localStorage.setItem('cc_ads', JSON.stringify(ads));
+            window.dispatchEvent(new Event('storage'));
+            mostraToast('🔴 Novo anúncio ao vivo: ' + payload.new.titulo);
+          }
+        })
+        .on('postgres_changes', {event:'UPDATE', schema:'public', table:'ads'}, payload=>{
+          console.log('Anúncio atualizado:', payload.new);
+          let ads = JSON.parse(localStorage.getItem('cc_ads')||'[]');
+          ads = ads.map(a=>a.id===payload.new.id ? payload.new : a);
+          localStorage.setItem('cc_ads', JSON.stringify(ads));
+          window.dispatchEvent(new Event('storage'));
+        })
+        .on('postgres_changes', {event:'DELETE', schema:'public', table:'ads'}, payload=>{
+          console.log('Anúncio excluído:', payload.old);
+          let ads = JSON.parse(localStorage.getItem('cc_ads')||'[]');
+          ads = ads.filter(a=>a.id!==payload.old.id);
+          localStorage.setItem('cc_ads', JSON.stringify(ads));
+          window.dispatchEvent(new Event('storage'));
+        })
+        .subscribe((status)=>{
+          console.log('Realtime status:', status);
+          const ind = document.getElementById('cc-ao-vivo');
+          if(ind){
+            if(status==='SUBSCRIBED'){
+              ind.innerHTML='<span style="display:inline-block; width:8px; height:8px; background:#22c55e; border-radius:50%; margin-right:6px; animation:pulse 2s infinite;"></span>AO VIVO • SUPABASE';
+              ind.style.background='rgba(34,197,94,0.9)';
+            } else {
+              ind.innerHTML='<span style="display:inline-block; width:8px; height:8px; background:#f59e0b; border-radius:50%; margin-right:6px;"></span>CONECTANDO...';
+            }
+          }
+        });
+    }catch(e){
+      console.error('Erro realtime:', e);
+    }
+  }
+
+  function mostraToast(msg){
+    let toast = document.getElementById('cc-toast');
+    if(!toast){
+      toast = document.createElement('div');
+      toast.id='cc-toast';
+      toast.style.cssText='position:fixed; top:80px; left:50%; transform:translateX(-50%); background:#1E40AF; color:#fff; padding:12px 20px; border-radius:999px; font-weight:800; font-size:13px; z-index:100000; box-shadow:0 8px 24px rgba(0,0,0,.25); display:none; max-width:90%; text-align:center;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.display='block';
+    setTimeout(()=>{ toast.style.display='none'; }, 4000);
+  }
+
+  // Intercepta salvamento local para enviar ao Supabase
+  const origSetItem = localStorage.setItem;
+  localStorage.setItem = function(k,v){
+    const res = origSetItem.call(this, k, v);
+    if(supabaseReady && k==='cc_ads'){
+      try{
+        const ads = JSON.parse(v);
+        // Envia apenas anúncios novos que ainda não estão no Supabase
+        ads.forEach(async (ad)=>{
+          // Verifica se já existe
+          const { data } = await supabaseClient.from('ads').select('id').eq('id', ad.id).single();
+          if(!data){
+            // Insere novo
+            await supabaseClient.from('ads').insert([{
+              id: ad.id,
+              user_id: ad.user_id,
+              titulo: ad.titulo,
+              descricao: ad.descricao,
+              categoria: ad.categoria,
+              preco: ad.preco,
+              bairro: ad.bairro||'Centro',
+              cidade: ad.cidade||'São Paulo',
+              estado: ad.estado||'SP',
+              fotos: ad.fotos||[],
+              status: ad.status||'ativo',
+              destaque: ad.destaque||false,
+              views: ad.views||0
+            }]);
+            console.log('Anúncio enviado ao Supabase:', ad.id);
+          }
+        });
+      }catch(e){ console.error('Erro enviar Supabase:', e); }
+    }
+    return res;
+  };
+
+  // Botão configurar no ADM
+  window.addEventListener('load', ()=>{
+    setTimeout(()=>{
+      initSupabase();
+      // Adiciona botão configurar Supabase no ADM
+      const observer = new MutationObserver(()=>{
+        const adm = document.getElementById('cc-adm');
+        if(adm && adm.classList.contains('on')){
+          const content = adm.querySelector('.cc-h');
+          if(content && !document.getElementById('btn-supabase')){
+            const btn = document.createElement('button');
+            btn.id='btn-supabase';
+            btn.textContent='⚙️ Supabase';
+            btn.style.cssText='background:rgba(255,255,255,0.2); color:#fff; border:none; padding:8px 12px; border-radius:999px; font-weight:700; font-size:11px; margin-right:8px;';
+            btn.onclick=()=>{ 
+              if(confirm('Configurar Supabase para tempo real entre celulares?\n\n1. Configure URL e KEY\n2. Ver SQL para criar tabelas')){
+                const op = prompt('Digite: 1 para configurar, 2 para ver SQL');
+                if(op==='1') configurarSupabase();
+                if(op==='2') mostrarSQLSupabase();
+              }
+            };
+            content.insertBefore(btn, content.lastElementChild);
+          }
+        }
+      });
+      observer.observe(document.body, {childList:true, subtree:true});
+    }, 1500);
+  });
+
+  window.supabaseClient = ()=>supabaseClient;
+  window.supabaseReady = ()=>supabaseReady;
 })();
 </script>
 </body>
